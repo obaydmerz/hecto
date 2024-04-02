@@ -26,8 +26,6 @@ interface HectoOptions {
  * GlobalFetcher interface represents the methods used for fetching and manipulating global variables.
  */
 interface GlobalFetcher {
-  /** Fetches the global variables from the interpreter. */
-  fetch: () => Promise<Record<string, any>>;
   /**
    * Retrieves the value of a global variable.
    * @param prop The name of the global variable.
@@ -77,7 +75,6 @@ declare class Hecto {
   #queue: {
     command: string;
     timeout: number;
-    onPrint?: (result: any) => void;
     started: boolean;
     trigger: {
       incompleteCommand(): void;

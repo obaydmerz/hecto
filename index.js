@@ -26,7 +26,7 @@ class Hecto extends EventEmitter {
   // Child process
   #child = null;
   // Child's outputs
-  #readout = null;
+  #readout = "";
   // Indicates if the instance is started and fully working
   #started = false;
   // A temporary output holder mainly used to keep event-based
@@ -55,7 +55,7 @@ class Hecto extends EventEmitter {
   }
 
   constructor({
-    shellNames = [],
+    shellNames = undefined,
     autoStart = true,
     args = ["-i"],
     cwd = undefined,
@@ -70,12 +70,6 @@ class Hecto extends EventEmitter {
 
     this.#extra = { debug };
 
-    this.on("sync", async () => {
-      if (typeof this.hardcode.global == "object") {
-        this.#global.updateContextContents(await this.hardcode.global.fetch());
-      }
-    });
-
     this.#setupShell(
       shellNames || this.hardcode.defaultShellNames || [],
       args,
@@ -87,22 +81,19 @@ class Hecto extends EventEmitter {
         this.start();
       }
 
-      this.once("start", async () => {
-        if (typeof this.hardcode.global == "object") {
-          this.#global.getter = (prop, value) => {
-            let [type, v] = value?.includes(">")
+      if (typeof this.hardcode.global == "object") {
+        this.#global.getter = (prop, value) => {
+          let [type, v] =
+            typeof value === "string" && value.includes(">")
               ? value.split(">")
               : [undefined, value];
 
-            return this.hardcode.global.get(prop, v, {
-              type: type?.substring(1),
-            });
-          };
-          this.#global.setter = this.hardcode.global.set;
-        }
-
-        this.#started = true;
-      });
+          return this.hardcode.global.get(prop, v, {
+            type: type?.substring(1),
+          });
+        };
+        this.#global.setter = this.hardcode.global.set;
+      }
     });
   }
 
@@ -116,45 +107,7 @@ class Hecto extends EventEmitter {
           : console.log("<--", data.replaceAll("\n", "\n<-- "))
         : undefined;
 
-      // Custom events handling mechanism
-      if (data.includes("¬-") || data.includes("-¬")) {
-        const startIndex = data.indexOf("¬-");
-        const endIndex = data.indexOf("-¬");
-
-        this.#events_readout =
-          this.#events_readout != null ? this.#events_readout : "";
-        this.#events_readout += data.substring(
-          startIndex !== -1 ? startIndex + 2 : 0,
-          endIndex > 0 ? endIndex : undefined
-        );
-
-        // Received a full custom events packet
-        if (endIndex > 0) {
-          let [event, res] = this.#events_readout.split(">");
-
-          // No confusion with built-in events
-          // Didn't add sync so child can force sync
-          if (["start"].includes(event)) event += "#";
-
-          try {
-            res = JSON.parse(res);
-          } catch (error) {} // Not json parsable :(
-
-          this.emit(event, res);
-        }
-      } else if (data.includes("¬¬*¬¬")) {
-        if (this.#readout != null) {
-          // Done receiving a full regular output packet
-          this.#readout += data.substring(0, data.indexOf("¬¬*¬¬"));
-          this.process(this.#readout);
-        } else {
-          // Done starting
-          this.#working = false;
-          clearTimeout(this.#timeouts.start);
-          this.emit("start");
-        }
-        this.#readout = "";
-      } else if (
+      if (
         data.endsWith("...") &&
         this.#readout != null &&
         (this.#readout.length === 0 || this.#readout.endsWith("\n"))
@@ -165,9 +118,58 @@ class Hecto extends EventEmitter {
           if (this.#queue[0].started)
             this.#queue.shift().trigger.incompleteCommand();
         }
-      } else {
-        if (this.#events_readout != null) this.#events_readout += data;
-        else if (this.#readout != null) this.#readout += data;
+      }
+
+      if (this.#events_readout != null) this.#events_readout += data;
+      else this.#readout += data;
+
+      // Custom event trigger is matched
+      const eventMatches = this.#readout.match(
+        /¬-([\s\S]*?)¬&\[([\s\S]*?)\]-¬/gm
+      );
+
+      if (eventMatches) {
+        for (const matched of eventMatches.map((e) => { this.#readout = this.#readout.replace(e, ""); return e.substring(2, e.length - 2).replace(/[\r\n]/gm, "") }
+        )) {
+          const [event, args] = matched.split("¬&");
+
+          // No confusion with built-in events
+          if (["start", "init"].includes(event)) event += "#";
+
+          try {
+            this.emit(event, ...JSON.parse(args));
+          } catch (error) {} // Not json parsable ):
+        }
+      }
+
+      // Ret is matched
+      const dataRetMatch = this.#readout.match(/¬\^\{([\s\S]*?)\}\^¬/gm);
+      if (dataRetMatch) {
+        // There is no more than ret match
+        const matched = dataRetMatch[dataRetMatch.length - 1];
+        if (this.hardcode.global)
+          try {
+            this.#global.updateContextContents(
+              JSON.parse(
+                matched.substring(2, matched.length - 2).replace(/[\r\n]/gm, "")
+              )
+            );
+          } catch (error) {}
+
+        if (this.#started) {
+          // Done receiving a full regular output packet
+          this.process(this.#readout);
+        } else {
+          // Done starting
+          this.#working = false;
+          this.#started = true;
+          clearTimeout(this.#timeouts.start);
+
+          // Allow for pre-things to be done before starting
+          this.asyncEmit("init").then(() => this.emit("start"));
+        }
+
+        this.#readout = "";
       }
     };
 
@@ -261,8 +263,8 @@ class Hecto extends EventEmitter {
     return new Promise((res) => this.once("start", res));
   }
 
-  async sync() {
-    await Promise.all(this.rawListeners("sync").map((e) => e()));
+  asyncEmit(event, ...args) {
+    return Promise.all(this.rawListeners(event).map((e) => e(...args)));
   }
 
   async exec(config = {}) {
@@ -340,13 +342,8 @@ class Hecto extends EventEmitter {
 
   async process(out) {
     if (typeof this.#queue[0] === "object" && this.#queue[0].started) {
-      const { resolve, noReSync = false, command } = this.#queue.shift();
+      const { resolve } = this.#queue.shift();
       this.#working = false;
-
-      if (!noReSync) {
-        await this.sync();
-      }
-
       resolve(out);
     }
   }
