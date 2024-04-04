@@ -2,16 +2,7 @@ import { spawn } from "node:child_process";
 import EventEmitter from "node:events";
 import { assert, extractData } from "./lib/utils.js";
 import { Result } from "./lib/result.js";
-import {
-  IncompleteCommand,
-  InterpreterNotFound,
-  MismatchStateError,
-  StartTimeoutException,
-  BadExitException,
-  StartupError,
-  TimeoutException,
-  handleError,
-} from "./lib/errors.js";
+import * as Errors from "./lib/errors.js";
 import { Context } from "./lib/context.js";
 
 class Hecto extends EventEmitter {
@@ -38,12 +29,12 @@ class Hecto extends EventEmitter {
   // A temporary object to hold timeouts
   #timeouts = { start: null };
 
-  #global = new Context();
+  #context = new Context();
 
   #extra = {};
 
-  get global() {
-    return this.#global.data;
+  get context() {
+    return this.#context.data;
   }
 
   // Metadata about the shell
@@ -56,7 +47,6 @@ class Hecto extends EventEmitter {
 
   constructor({
     shellNames = undefined,
-    autoStart = true,
     args = ["-i"],
     cwd = undefined,
     debug = {
@@ -66,7 +56,7 @@ class Hecto extends EventEmitter {
   } = {}) {
     super();
     if (this.hardcode == undefined)
-      throw new Error("You cannot instantiate this abstract class!");
+      throw new TypeError("You cannot instantiate this abstract class!");
 
     this.#extra = { debug };
 
@@ -77,22 +67,41 @@ class Hecto extends EventEmitter {
     ).then(() => {
       this.#setupListeners();
 
-      if (autoStart) {
-        this.start();
-      }
+      // Run hardcoded setup things
+      this.hardcode.setup();
 
-      if (typeof this.hardcode.global == "object") {
-        this.#global.getter = (prop, value) => {
+      // Prevent interruption
+      this.#working = true;
+
+      // Handle exits
+      this.#child.once("exit", (errcode) => {
+        if (errcode === 0) return;
+        this.#started = false;
+        this.#working = false;
+        this.#child = undefined;
+        throw new Errors.UnexpectedExitError(`Exited with code ${errcode}`);
+      });
+
+      // Register timeout
+      this.#timeouts.start = setTimeout(() => {
+        this.#started = false;
+        this.#working = false;
+        throw new Errors.StartTimeoutError();
+      }, 8000);
+
+      // Context handler
+      if (typeof this.hardcode.context == "object") {
+        this.#context.getter = (prop, value) => {
           let [type, v] =
             typeof value === "string" && value.includes(">")
               ? value.split(">")
               : [undefined, value];
 
-          return this.hardcode.global.get(prop, v, {
+          return this.hardcode.context.get(prop, v, {
             type: type?.substring(1),
           });
         };
-        this.#global.setter = this.hardcode.global.set;
+        this.#context.setter = this.hardcode.context.set;
       }
     });
   }
@@ -129,8 +138,10 @@ class Hecto extends EventEmitter {
       );
 
       if (eventMatches) {
-        for (const matched of eventMatches.map((e) => { this.#readout = this.#readout.replace(e, ""); return e.substring(2, e.length - 2).replace(/[\r\n]/gm, "") }
-        )) {
+        for (const matched of eventMatches.map((e) => {
+          this.#readout = this.#readout.replace(e, "");
+          return e.substring(2, e.length - 2).replace(/[\r\n]/gm, "");
+        })) {
           const [event, args] = matched.split("¬&");
 
           // No confusion with built-in events
@@ -147,9 +158,9 @@ class Hecto extends EventEmitter {
       if (dataRetMatch) {
         // There is no more than ret match
         const matched = dataRetMatch[dataRetMatch.length - 1];
-        if (this.hardcode.global)
+        if (this.hardcode.context)
           try {
-            this.#global.updateContextContents(
+            this.#context.updateContextContents(
               JSON.parse(
                 matched.substring(2, matched.length - 2).replace(/[\r\n]/gm, "")
               )
@@ -221,44 +232,13 @@ class Hecto extends EventEmitter {
     }
 
     if (this.#child == null) {
-      throw new InterpreterNotFound(
+      throw new Errors.InterpreterNotFound(
         "Cannot find an interpreter! Try installing it or add your own."
       );
     }
   }
 
-  // Inits the instance
-  async start() {
-    if (this.#started) return;
-
-    assert(
-      this.#child != null,
-      "Cannot restart a stopped instance!",
-      StartupError
-    );
-
-    // Calls the setup funciton to handle pre startup things
-    this.hardcode.setup();
-
-    this.#child.once("exit", (errcode) => {
-      if (errcode === 0) return;
-      this.#started = false;
-      this.#working = false;
-      this.#child = undefined;
-      throw new BadExitException(`Exited with code ${errcode}`);
-    });
-
-    this.#timeouts.start = setTimeout(() => {
-      this.#started = false;
-      this.#working = false;
-      throw new StartTimeoutException();
-    }, 8000);
-
-    await this.waitStart();
-  }
-
-  // A legacy way to wait for the start
-  async waitStart() {
+  start() {
     if (this.#started) return;
     return new Promise((res) => this.once("start", res));
   }
@@ -268,7 +248,13 @@ class Hecto extends EventEmitter {
   }
 
   async exec(config = {}) {
-    assert(this.#started, "The shell isn't started yet!!", MismatchStateError);
+    assert(
+      this.#started,
+      "The shell isn't started yet!!",
+      Errors.MismatchStateError
+    );
+
+    const that = this;
 
     if (typeof config === "string") {
       config = { command: config };
@@ -285,7 +271,7 @@ class Hecto extends EventEmitter {
       if (config.timeout > 0) {
         tm = setTimeout(() => {
           reject(
-            new TimeoutException(
+            new Errors.TimeoutError(
               `Your code exceeded the timeout of ${config.timeout}ms!`
             )
           );
@@ -297,7 +283,7 @@ class Hecto extends EventEmitter {
         started: false,
         trigger: {
           incompleteCommand() {
-            reject(new IncompleteCommand());
+            reject(new Errors.IncompleteCommand());
           },
         },
         resolve(out) {
@@ -305,7 +291,16 @@ class Hecto extends EventEmitter {
           const { json, errjson } = extractData(out);
 
           if (errjson != null) {
-            return handleError(errjson, errjson.fn || "<console>");
+            const err = handleError(
+              errjson,
+              errjson.fn || "<console>",
+              that.hardcode.exceptionHandler
+            );
+
+            if (err) {
+              // Error is handled and silenced by the custom execption handler
+              resolve(err);
+            }
           }
 
           resolve(
@@ -349,4 +344,4 @@ class Hecto extends EventEmitter {
   }
 }
 
-export { Hecto, Result };
+export { Hecto, Result, Errors };

@@ -1,5 +1,6 @@
 import { ChildProcessWithoutNullStreams } from "child_process";
 import { Result } from "./lib/result";
+import { Exception } from "./lib/errors";
 
 /**
  * HectoOptions interface represents the options that can be passed to the Hecto constructor.
@@ -7,8 +8,6 @@ import { Result } from "./lib/result";
 interface HectoOptions {
   /** An array of shell names to try when spawning the child process. */
   shellNames?: string[];
-  /** Determines whether the Hecto instance should automatically start upon instantiation. Default is true. */
-  autoStart?: boolean;
   /** Additional arguments to pass to the shell process. */
   args?: string[];
   /** The current working directory of the shell process. */
@@ -23,15 +22,15 @@ interface HectoOptions {
 }
 
 /**
- * GlobalFetcher interface represents the methods used for fetching and manipulating global variables.
+ * ContextFetcher interface represents the methods used for fetching and manipulating context variables.
  */
-interface GlobalFetcher {
+interface ContextFetcher {
   /**
-   * Retrieves the value of a global variable.
-   * @param prop The name of the global variable.
-   * @param value The current value of the global variable.
+   * Retrieves the value of a context variable.
+   * @param prop The name of the context variable.
+   * @param value The current value of the context variable.
    * @param options Additional options.
-   * @returns The processed value of the global variable.
+   * @returns The processed value of the context variable.
    */
   get: (
     prop: string,
@@ -39,11 +38,11 @@ interface GlobalFetcher {
     options?: { type?: string }
   ) => any | Promise<any>;
   /**
-   * Sets the value of a global variable.
-   * @param prop The name of the global variable.
+   * Sets the value of a context variable.
+   * @param prop The name of the context variable.
    * @param value The new value to set.
-   * @param oldValue The previous value of the global variable.
-   * @returns The modified value of the global variable.
+   * @param oldValue The previous value of the context variable.
+   * @returns The modified value of the context variable.
    */
   set: (prop: string, value: any, oldValue: any) => any | Promise<any>;
 }
@@ -61,8 +60,18 @@ interface Hardcode {
    * @param command The command to execute.
    */
   writeExecutionCommand(command: string): void;
-  /** The global variables fetcher. */
-  global: GlobalFetcher;
+  /** The context variables fetcher. */
+  context: ContextFetcher;
+  /**
+   * The custom lang-side thrown execptions.
+   *
+   * This is mostly used to map the thrown execption to a class based error.
+   *
+   * Return anything that's not based on the Exception class or nothing to silence the error.
+   *
+   * @param err The primitive execption, use `err.name` to figure out the other-side real name.
+   */
+  exceptionHandler: (err: Exception) => Exception | void | any;
 }
 
 /**
@@ -108,6 +117,11 @@ declare class Hecto {
   #working: boolean;
 
   /**
+   * Gain direct access to your bridged lang globals or context.
+   */
+  get context(): object;
+
+  /**
    * Timeouts for various operations.
    */
   #timeouts: {
@@ -144,22 +158,12 @@ declare class Hecto {
   #process(out: string): void;
 
   /**
-   * Starts the shell process.
+   * Waits for the shell process to start.
+   *
+   * It's basically `this.on('start')`
    * @returns A promise that resolves when the shell process has started.
    */
   start(): Promise<void>;
-
-  /**
-   * Waits for the shell process to start.
-   * @returns A promise that resolves when the shell process has started.
-   */
-  waitStart(): Promise<void>;
-
-  /**
-   * Syncs the global variables with the interpreter.
-   * @returns A promise that resolves when the global variables have been synced.
-   */
-  sync(): Promise<void>;
 
   /**
    * Executes a command in the shell.
@@ -177,4 +181,4 @@ declare class Hecto {
   exit(): boolean;
 }
 
-export { Hecto, Result };
+export { Hecto, Result, Hardcode, ContextFetcher, HectoOptions };
