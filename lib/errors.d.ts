@@ -3,9 +3,19 @@
  */
 
 /**
+ * Represents an error when the process exits.
+ */
+export class UnexpectedExitError extends StartupError {
+  /**
+   * The error message.
+   */
+  message: string;
+}
+
+/**
  * Represents an error when an execution times out.
  */
-export class TimeoutException extends Error {}
+export class TimeoutError extends Error {}
 
 /**
  * Represents an error when there is a state mismatch.
@@ -25,19 +35,9 @@ export class InterpreterNotFound extends StartupError {}
 /**
  * Represents an error when the startup process times out.
  */
-export class StartTimeoutException extends StartupError {
+export class StartTimeoutError extends StartupError {
   /**
    * The error message for a startup timeout.
-   */
-  message: string;
-}
-
-/**
- * Represents an error when the process exits.
- */
-export class BadExitException extends StartupError {
-  /**
-   * The error message.
    */
   message: string;
 }
@@ -90,6 +90,11 @@ export class Exception extends Error {
  * Handles and throws an error.
  * @param {Object} errObj - The error object.
  * @param {string} [filename="<execution>"] - The filename where the error occurred.
- * @throws {Exception} - The exception corresponding to the error.
+ * @param {Function} [customExceptionHandler="undefined"] - Custom execption modifier.
+ * @throws {Exception} - The error object.
  */
-export function handleError(errObj: object, filename?: string): void;
+export function handleError(
+  errObj: object,
+  filename?: string,
+  customExceptionHandler?: () => typeof Exception | any | void
+): void;
