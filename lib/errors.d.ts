@@ -1,9 +1,9 @@
 /**
- * @file Defines error classes for Python interaction in the errors module.
+ * @file Defines error classes for interaction in the errors module.
  */
 
 /**
- * Represents an error when a Python execution times out.
+ * Represents an error when an execution times out.
  */
 export class TimeoutException extends Error {}
 
@@ -88,8 +88,8 @@ export class Exception extends Error {
 
 /**
  * Handles and throws an error.
- * @param {Object} errObj - The Python error object.
+ * @param {Object} errObj - The error object.
  * @param {string} [filename="<execution>"] - The filename where the error occurred.
- * @throws {Exception} - The exception corresponding to the Python error.
+ * @throws {Exception} - The exception corresponding to the error.
  */
 export function handleError(errObj: object, filename?: string): void;

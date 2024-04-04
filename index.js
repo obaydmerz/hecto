@@ -222,7 +222,7 @@ class Hecto extends EventEmitter {
 
     if (this.#child == null) {
       throw new InterpreterNotFound(
-        "Cannot find a python interpreter! Try installing python or adding your own."
+        "Cannot find an interpreter! Try installing it or add your own."
       );
     }
   }

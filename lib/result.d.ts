@@ -1,9 +1,9 @@
 /**
- * @file Defines the Result class for representing Python execution results.
+ * @file Defines the Result class for representing execution results.
  */
 
 /**
- * Represents the result of a Python execution.
+ * Represents the result of a execution.
  */
 export class Result extends Array {
   /**
